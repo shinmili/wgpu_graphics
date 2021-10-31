@@ -549,15 +549,14 @@ impl ImageSize for Texture {
 }
 
 /// The resource needed for rendering 2D.
-pub struct Wgpu2d<'a> {
-    device: &'a wgpu::Device,
+pub struct Wgpu2d {
     colored_render_pipelines: PsoStencil<wgpu::RenderPipeline>,
     textured_render_pipelines: PsoStencil<wgpu::RenderPipeline>,
 }
 
-impl<'a> Wgpu2d<'a> {
+impl Wgpu2d {
     /// Creates a new `Wgpu2d`.
-    pub fn new<'b>(device: &'a wgpu::Device, config: &'b wgpu::SurfaceConfiguration) -> Self {
+    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
         let colored_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Colored Pipeline Layout"),
@@ -665,7 +664,6 @@ impl<'a> Wgpu2d<'a> {
         });
 
         Self {
-            device,
             colored_render_pipelines,
             textured_render_pipelines,
         }
@@ -685,7 +683,7 @@ impl<'a> Wgpu2d<'a> {
     where
         F: FnOnce(Context, &mut WgpuGraphics),
     {
-        let mut g = WgpuGraphics::new(self, config);
+        let mut g = WgpuGraphics::new(self, device, config);
         let c = Context::new_viewport(viewport);
         f(c, &mut g);
         g.draw(device, output_view)
@@ -694,7 +692,8 @@ impl<'a> Wgpu2d<'a> {
 
 /// Graphics back-end.
 pub struct WgpuGraphics<'a> {
-    wgpu2d: &'a Wgpu2d<'a>,
+    wgpu2d: &'a Wgpu2d,
+    device: &'a wgpu::Device,
     width: u32,
     height: u32,
     color_format: wgpu::TextureFormat,
@@ -711,13 +710,17 @@ pub struct WgpuGraphics<'a> {
 
 impl<'a> WgpuGraphics<'a> {
     /// Creates a new `WgpuGraphics`.
-    pub fn new(wgpu2d: &'a Wgpu2d<'a>, config: &wgpu::SurfaceConfiguration) -> Self {
+    pub fn new(
+        wgpu2d: &'a Wgpu2d,
+        device: &'a wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+    ) -> Self {
         let size = wgpu::Extent3d {
             width: config.width,
             height: config.height,
             depth_or_array_layers: 1,
         };
-        let stencil = wgpu2d.device.create_texture(&wgpu::TextureDescriptor {
+        let stencil = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Stencil Texture"),
             size,
             mip_level_count: 1,
@@ -732,6 +735,7 @@ impl<'a> WgpuGraphics<'a> {
         });
         Self {
             wgpu2d,
+            device,
             width: config.width,
             height: config.height,
             color_format: config.format,
@@ -826,21 +830,20 @@ impl<'a> WgpuGraphics<'a> {
     }
 
     fn bundle_colored(&mut self, colored_inputs: &[ColoredPipelineInput], draw_state: &DrawState) {
-        let vertex_buffer =
-            self.wgpu2d
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Vertex Buffer"),
-                    contents: bytemuck::cast_slice(colored_inputs),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(colored_inputs),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
         let (pipeline, stencil_val) = self
             .wgpu2d
             .colored_render_pipelines
             .stencil_blend(draw_state.stencil, draw_state.blend);
 
-        let render_bundle = self.bundle(self.wgpu2d.device, |render_encoder| {
+        let render_bundle = self.bundle(self.device, |render_encoder| {
             render_encoder.set_pipeline(pipeline);
             render_encoder.set_vertex_buffer(0, vertex_buffer.slice(..));
             render_encoder.draw(0..colored_inputs.len() as u32, 0..1);
@@ -856,21 +859,20 @@ impl<'a> WgpuGraphics<'a> {
         texture: &Texture,
         draw_state: &DrawState,
     ) {
-        let vertex_buffer =
-            self.wgpu2d
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Vertex Buffer"),
-                    contents: bytemuck::cast_slice(textured_inputs),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(textured_inputs),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
         let (pipeline, stencil_val) = self
             .wgpu2d
             .textured_render_pipelines
             .stencil_blend(draw_state.stencil, draw_state.blend);
 
-        let render_bundle = self.bundle(self.wgpu2d.device, |render_encoder| {
+        let render_bundle = self.bundle(self.device, |render_encoder| {
             render_encoder.set_pipeline(pipeline);
             render_encoder.set_bind_group(0, &texture.bind_group, &[]);
             render_encoder.set_vertex_buffer(0, vertex_buffer.slice(..));
